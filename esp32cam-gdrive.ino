@@ -18,9 +18,9 @@
 #define JPEG_QUALITY        10       // 0-63, lower = better quality/bigger file
 
 // ---------- Pick ONE board (see pin tables below) ----------
-#define CAMERA_MODEL_AI_THINKER        // ESP32-CAM (the classic one on GitHub)
+//#define CAMERA_MODEL_AI_THINKER        // ESP32-CAM (the classic one on GitHub)
 //#define CAMERA_MODEL_WROVER_KIT      // Freenove ESP32-WROVER, ESP-WROVER-KIT
-//#define CAMERA_MODEL_ESP32S3_EYE     // ESP32-S3-EYE, Freenove ESP32-S3-WROOM
+#define CAMERA_MODEL_ESP32S3_EYE     // ESP32-S3-EYE, Freenove ESP32-S3-WROOM
 //#define CAMERA_MODEL_XIAO_ESP32S3    // Seeed XIAO ESP32S3 Sense
 
 #if defined(CAMERA_MODEL_AI_THINKER)

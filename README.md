@@ -21,3 +21,11 @@ uploads it, and goes back to sleep.
 5. **Arduino IDE settings**: pick the matching board (e.g. "AI Thinker ESP32-CAM"; for S3 boards
    enable PSRAM "OPI PSRAM" or as listed for your board), then upload.
    AI-Thinker boards have no USB chip: wire GPIO0 to GND while flashing, then unplug it and reset.
+
+## ESP32-S3-CAM boards with two USB-C ports (OV3660 / "ESP32-S3-CAM")
+
+- Plug into the port labelled **TTL** (the USB-serial chip), not **OTG**.
+- Sketch: `CAMERA_MODEL_ESP32S3_EYE` is selected.
+- Arduino IDE > Tools: Board **ESP32S3 Dev Module**, **PSRAM: OPI PSRAM** (the module is an N16R8),
+  **USB CDC On Boot: Disabled**, Flash Size to match your module (commonly 16MB).
+- If the upload won't start: hold **BOOT**, tap **RST**, release **BOOT**, then upload.
