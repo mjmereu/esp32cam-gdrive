@@ -1,6 +1,6 @@
 function doPost(e) {
   var data = Utilities.base64Decode(e.parameters.data);
-  var nombreArchivo = Utilities.formatDate(new Date(), "GMT-3", "yyyyMMdd_HHmmss")+".jpg";
+  var nombreArchivo = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd_HHmmss")+".jpg";
   var blob = Utilities.newBlob(data, e.parameters.mimetype, nombreArchivo );
   
   
