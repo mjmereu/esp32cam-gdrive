@@ -106,14 +106,28 @@ void goToSleep() {
 
 bool connectWifi() {
   Serial.println("WiFi: starting radio");
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);   // lower TX current peaks (helps weak USB power)
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+    Serial.printf("\nDisconnect reason: %d\n", info.wifi_sta_disconnected.reason);
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
+  // Diagnostic: list visible networks so you can see if your SSID is in range (2.4 GHz)
+  int n = WiFi.scanNetworks();
+  Serial.printf("Scan found %d networks:\n", n);
+  for (int i = 0; i < n; i++) {
+    Serial.printf("  %s  RSSI %d  ch %d  enc %d\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i), WiFi.encryptionType(i));
+  }
+
+  WiFi.setTxPower(WIFI_POWER_15dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to " WIFI_SSID);
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - start > WIFI_TIMEOUT_MS) {
-      Serial.println("\nWiFi failed");
+      Serial.printf("\nWiFi failed, status %d\n", WiFi.status());
       return false;
     }
     Serial.print(".");
