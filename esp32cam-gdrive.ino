@@ -162,7 +162,10 @@ bool initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_RGB565;   // raw frame so we can draw the timestamp, then re-encode to JPEG
+  // Timestamp needs a raw RGB565 frame (~600 KB), which only fits in PSRAM.
+  // No PSRAM (wrong Tools > PSRAM setting) -> fall back to plain JPEG, no stamp.
+  Serial.println(psramFound() ? "PSRAM found" : "No PSRAM: check Tools > PSRAM = OPI PSRAM; photos will have no stamp");
+  config.pixel_format = psramFound() ? PIXFORMAT_RGB565 : PIXFORMAT_JPEG;
   config.frame_size = FRAME_SIZE;
   config.jpeg_quality = 12;
   config.fb_count = 1;
@@ -260,16 +263,22 @@ bool uploadPhoto() {
     return false;
   }
 
-  struct tm t;
-  if (getLocalTime(&t, 0)) {
-    char ts[24];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
-    drawStamp((uint16_t*)fb->buf, fb->width, fb->height, ts);
-  }
-
   uint8_t* jpg = nullptr;
   size_t jpgLen = 0;
-  bool encoded = fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
+  bool encoded;
+  if (fb->format == PIXFORMAT_JPEG) {   // no-PSRAM fallback: already a JPEG, copy it
+    jpg = (uint8_t*)malloc(fb->len);
+    encoded = jpg != nullptr;
+    if (encoded) { memcpy(jpg, fb->buf, fb->len); jpgLen = fb->len; }
+  } else {
+    struct tm t;
+    if (getLocalTime(&t, 0)) {
+      char ts[24];
+      strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
+      drawStamp((uint16_t*)fb->buf, fb->width, fb->height, ts);
+    }
+    encoded = fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
+  }
   esp_camera_fb_return(fb);
   if (!encoded) {
     Serial.println("JPEG encode failed");
