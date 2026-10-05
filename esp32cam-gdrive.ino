@@ -105,7 +105,9 @@ void goToSleep() {
 }
 
 bool connectWifi() {
+  Serial.println("WiFi: starting radio");
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);   // lower TX current peaks (helps weak USB power)
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to " WIFI_SSID);
   unsigned long start = millis();
@@ -242,11 +244,14 @@ bool uploadPhoto() {
 }
 
 void setup() {
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // disable brownout reset
   Serial.begin(115200);
-  delay(100);
+  delay(1000);
+  Serial.println("Boot");
 
-  if (connectWifi() && initCamera()) {
+  // Camera first, then WiFi: the serial markers show which step triggers the reset.
+  if (initCamera()) Serial.println("Camera OK");
+  else { goToSleep(); }
+  if (connectWifi()) {
     Serial.println(uploadPhoto() ? "Upload OK" : "Upload failed");
     esp_camera_deinit();
   }
