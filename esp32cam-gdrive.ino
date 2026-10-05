@@ -7,6 +7,8 @@
 #include "soc/rtc_cntl_reg.h"
 #include "mbedtls/base64.h"
 #include "esp_camera.h"
+#include "img_converters.h"
+#include <time.h>
 
 #include "secrets.h"   // copy secrets.h.example -> secrets.h and edit
 
@@ -15,7 +17,8 @@
 #define WIFI_TIMEOUT_MS     20000
 #define RESPONSE_TIMEOUT_MS 30000    // wait for Google's reply
 #define FRAME_SIZE          FRAMESIZE_VGA  // UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA...
-#define JPEG_QUALITY        10       // 0-63, lower = better quality/bigger file
+#define JPEG_QUALITY        80       // 0-100, higher = better quality/bigger file
+#define TIMEZONE            "EST5EDT,M3.2.0,M11.1.0"  // US Eastern; other zones: https://github.com/nayarsystems/posix_tz_db
 
 // ---------- Pick ONE board (see pin tables below) ----------
 //#define CAMERA_MODEL_AI_THINKER        // ESP32-CAM (the classic one on GitHub)
@@ -159,9 +162,9 @@ bool initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
+  config.pixel_format = PIXFORMAT_RGB565;   // raw frame so we can draw the timestamp, then re-encode to JPEG
   config.frame_size = FRAME_SIZE;
-  config.jpeg_quality = JPEG_QUALITY;
+  config.jpeg_quality = 12;
   config.fb_count = 1;
   config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
@@ -193,17 +196,55 @@ static size_t b64UrlEncode(const uint8_t* in, size_t len, char* out) {
 
 // Encode in 192-byte chunks (a multiple of 3, so no padding mid-stream).
 // If client is NULL, only measures the total length.
-static size_t streamImage(camera_fb_t* fb, WiFiClientSecure* client) {
+static size_t streamImage(const uint8_t* buf, size_t len, WiFiClientSecure* client) {
   const size_t CHUNK = 192;
   char out[3 * 4 * 64 + 4];
   size_t total = 0;
-  for (size_t i = 0; i < fb->len; i += CHUNK) {
-    size_t n = min(CHUNK, fb->len - i);
-    size_t o = b64UrlEncode(fb->buf + i, n, out);
+  for (size_t i = 0; i < len; i += CHUNK) {
+    size_t n = min(CHUNK, len - i);
+    size_t o = b64UrlEncode(buf + i, n, out);
     if (client) client->write((const uint8_t*)out, o);
     total += o;
   }
   return total;
+}
+
+// 5x7 font (column-major, bit0 = top row) for the characters in STAMP_CHARS.
+static const char STAMP_CHARS[] = "0123456789-: ";
+static const uint8_t STAMP_FONT[13][5] = {
+  {0x3E,0x51,0x49,0x45,0x3E}, {0x00,0x42,0x7F,0x40,0x00}, {0x42,0x61,0x51,0x49,0x46},
+  {0x21,0x41,0x45,0x4B,0x31}, {0x18,0x14,0x12,0x7F,0x10}, {0x27,0x45,0x45,0x45,0x39},
+  {0x3C,0x4A,0x49,0x49,0x30}, {0x01,0x71,0x09,0x05,0x03}, {0x36,0x49,0x49,0x49,0x36},
+  {0x06,0x49,0x49,0x29,0x1E}, {0x08,0x08,0x08,0x08,0x08}, {0x00,0x36,0x36,0x00,0x00},
+  {0x00,0x00,0x00,0x00,0x00}
+};
+
+// Draw white text on a black box, bottom-left of an RGB565 frame (black/white are byte-order safe).
+static void drawStamp(uint16_t* px, int w, int h, const char* text) {
+  const int S = 2;   // pixel scale
+  const int len = strlen(text);
+  const int boxW = len * 6 * S + 6, boxH = 7 * S + 6;
+  const int x0 = 4, y0 = h - boxH - 4;
+  for (int y = 0; y < boxH; y++)
+    for (int x = 0; x < boxW; x++)
+      px[(y0 + y) * w + x0 + x] = 0x0000;
+  for (int c = 0; c < len; c++) {
+    const char* p = strchr(STAMP_CHARS, text[c]);
+    if (!p) continue;
+    const uint8_t* g = STAMP_FONT[p - STAMP_CHARS];
+    for (int col = 0; col < 5; col++)
+      for (int row = 0; row < 7; row++)
+        if ((g[col] >> row) & 1)
+          for (int dy = 0; dy < S; dy++)
+            for (int dx = 0; dx < S; dx++)
+              px[(y0 + 3 + row * S + dy) * w + x0 + 3 + (c * 6 + col) * S + dx] = 0xFFFF;
+  }
+}
+
+void syncTime() {
+  configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
+  struct tm t;
+  Serial.println(getLocalTime(&t, 8000) ? "Time synced" : "Time sync failed (photo will have no stamp)");
 }
 
 bool uploadPhoto() {
@@ -219,17 +260,33 @@ bool uploadPhoto() {
     return false;
   }
 
+  struct tm t;
+  if (getLocalTime(&t, 0)) {
+    char ts[24];
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
+    drawStamp((uint16_t*)fb->buf, fb->width, fb->height, ts);
+  }
+
+  uint8_t* jpg = nullptr;
+  size_t jpgLen = 0;
+  bool encoded = fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
+  esp_camera_fb_return(fb);
+  if (!encoded) {
+    Serial.println("JPEG encode failed");
+    return false;
+  }
+
   WiFiClientSecure client;
   client.setInsecure();   // skip certificate check (simple; fine for a hobby project)
   Serial.println("Connecting to " + String(myDomain));
   if (!client.connect(myDomain, 443)) {
     Serial.println("Connection failed");
-    esp_camera_fb_return(fb);
+    free(jpg);
     return false;
   }
 
   String head = "filename=ESP32-CAM.jpg&mimetype=image/jpeg&data=";
-  size_t bodyLen = head.length() + streamImage(fb, nullptr);
+  size_t bodyLen = head.length() + streamImage(jpg, jpgLen, nullptr);
 
   client.print("POST /macros/s/" GOOGLE_SCRIPT_ID "/exec HTTP/1.1\r\n");
   client.print("Host: " + String(myDomain) + "\r\n");
@@ -237,8 +294,8 @@ bool uploadPhoto() {
   client.print("Content-Type: application/x-www-form-urlencoded\r\n");
   client.print("Connection: close\r\n\r\n");
   client.print(head);
-  streamImage(fb, &client);
-  esp_camera_fb_return(fb);
+  streamImage(jpg, jpgLen, &client);
+  free(jpg);
 
   Serial.println("Waiting for response");
   unsigned long start = millis();
@@ -266,6 +323,7 @@ void setup() {
   if (initCamera()) Serial.println("Camera OK");
   else { goToSleep(); }
   if (connectWifi()) {
+    syncTime();
     Serial.println(uploadPhoto() ? "Upload OK" : "Upload failed");
     esp_camera_deinit();
   }
