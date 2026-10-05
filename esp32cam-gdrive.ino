@@ -18,6 +18,7 @@
 #define RESPONSE_TIMEOUT_MS 30000    // wait for Google's reply
 #define FRAME_SIZE          FRAMESIZE_VGA  // UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA...
 #define JPEG_QUALITY        80       // 0-100, higher = better quality/bigger file
+#define STAMP_SWAP_BYTES    1        // fixes garbled colors from RGB565 byte order; set 0 if colors look worse
 #define TIMEZONE            "EST5EDT,M3.2.0,M11.1.0"  // US Eastern; other zones: https://github.com/nayarsystems/posix_tz_db
 
 // ---------- Pick ONE board (see pin tables below) ----------
@@ -277,6 +278,10 @@ bool uploadPhoto() {
       strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
       drawStamp((uint16_t*)fb->buf, fb->width, fb->height, ts);
     }
+#if STAMP_SWAP_BYTES
+    uint16_t* px = (uint16_t*)fb->buf;
+    for (size_t i = 0; i < fb->len / 2; i++) px[i] = (px[i] >> 8) | (px[i] << 8);
+#endif
     encoded = fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
   }
   esp_camera_fb_return(fb);
