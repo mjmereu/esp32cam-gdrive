@@ -17,7 +17,10 @@
 #define WIFI_TIMEOUT_MS     20000
 #define RESPONSE_TIMEOUT_MS 30000    // wait for Google's reply
 #define FRAME_SIZE          FRAMESIZE_UXGA  // 1600x1200: largest that fits as raw RGB565 in 8 MB PSRAM (needed for the stamp)
-#define JPEG_QUALITY        80       // 0-100, higher = better quality/bigger file
+#define JPEG_QUALITY        90       // 0-100, higher = better quality/bigger file (stamped path only; 100 overflows)
+#define NATIVE_JPEG         1        // 1 = sensor's own JPEG: cleanest + biggest, NO timestamp/rotation on photo; 0 = stamped RGB565 path
+#define NATIVE_FRAME_SIZE   FRAMESIZE_QXGA   // 2048x1536 (native JPEG path)
+#define NATIVE_JPEG_QUALITY 10       // 0-63, LOWER = better/bigger file (native JPEG path)
 #define STAMP_SWAP_BYTES    1        // fixes garbled colors from RGB565 byte order; set 0 if colors look worse
 #define ROTATE_PORTRAIT    1        // 1 = rotate photo 90 degrees to portrait, 0 = keep landscape
 #define ROTATE_CLOCKWISE   1        // 1 = clockwise, 0 = counter-clockwise (flip if the photo is upside down)
@@ -168,9 +171,15 @@ bool initCamera() {
   // Timestamp needs a raw RGB565 frame (~600 KB), which only fits in PSRAM.
   // No PSRAM (wrong Tools > PSRAM setting) -> fall back to plain JPEG, no stamp.
   Serial.println(psramFound() ? "PSRAM found" : "No PSRAM: check Tools > PSRAM = OPI PSRAM; photos will have no stamp");
+#if NATIVE_JPEG
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = psramFound() ? NATIVE_FRAME_SIZE : FRAMESIZE_VGA;
+  config.jpeg_quality = NATIVE_JPEG_QUALITY;
+#else
   config.pixel_format = psramFound() ? PIXFORMAT_RGB565 : PIXFORMAT_JPEG;
   config.frame_size = FRAME_SIZE;
   config.jpeg_quality = 12;
+#endif
   config.fb_count = 1;
   config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
@@ -293,7 +302,8 @@ bool uploadPhoto() {
   size_t jpgLen = 0;
   bool encoded;
   if (fb->format == PIXFORMAT_JPEG) {   // no-PSRAM fallback: already a JPEG, copy it
-    jpg = (uint8_t*)malloc(fb->len);
+    jpg = (uint8_t*)ps_malloc(fb->len);
+    if (!jpg) jpg = (uint8_t*)malloc(fb->len);
     encoded = jpg != nullptr;
     if (encoded) { memcpy(jpg, fb->buf, fb->len); jpgLen = fb->len; }
   } else {
@@ -367,7 +377,9 @@ void setup() {
   if (initCamera()) Serial.println("Camera OK");
   else { goToSleep(); }
   if (connectWifi()) {
-    syncTime();
+#if !NATIVE_JPEG
+    syncTime();   // only needed for the on-photo timestamp
+#endif
     Serial.println(uploadPhoto() ? "Upload OK" : "Upload failed");
     esp_camera_deinit();
   }
