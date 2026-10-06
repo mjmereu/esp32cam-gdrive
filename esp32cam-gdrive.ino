@@ -19,6 +19,8 @@
 #define FRAME_SIZE          FRAMESIZE_UXGA  // 1600x1200: largest that fits as raw RGB565 in 8 MB PSRAM (needed for the stamp)
 #define JPEG_QUALITY        80       // 0-100, higher = better quality/bigger file
 #define STAMP_SWAP_BYTES    1        // fixes garbled colors from RGB565 byte order; set 0 if colors look worse
+#define ROTATE_PORTRAIT    1        // 1 = rotate photo 90 degrees to portrait, 0 = keep landscape
+#define ROTATE_CLOCKWISE   1        // 1 = clockwise, 0 = counter-clockwise (flip if the photo is upside down)
 #define TIMEZONE            "EST5EDT,M3.2.0,M11.1.0"  // US Eastern; other zones: https://github.com/nayarsystems/posix_tz_db
 
 // ---------- Pick ONE board (see pin tables below) ----------
@@ -245,6 +247,29 @@ static void drawStamp(uint16_t* px, int w, int h, const char* text) {
   }
 }
 
+// Rotate an RGB565 frame 90 degrees in place (w x h becomes h x w). Returns false if out of memory.
+static bool rotate90(uint16_t* px, int w, int h, bool cw) {
+  size_t n = (size_t)w * h;
+  uint8_t* seen = (uint8_t*)ps_calloc((n + 7) / 8, 1);
+  if (!seen) return false;
+  for (size_t start = 0; start < n; start++) {
+    if (seen[start >> 3] & (1 << (start & 7))) continue;
+    size_t i = start;
+    uint16_t carry = px[i];
+    do {
+      seen[i >> 3] |= 1 << (i & 7);
+      size_t x = i % w, y = i / w;
+      size_t j = cw ? x * h + (h - 1 - y) : (size_t)(w - 1 - x) * h + y;
+      uint16_t tmp = px[j];
+      px[j] = carry;
+      carry = tmp;
+      i = j;
+    } while (i != start);
+  }
+  free(seen);
+  return true;
+}
+
 void syncTime() {
   configTzTime(TIMEZONE, "pool.ntp.org", "time.nist.gov");
   struct tm t;
@@ -272,17 +297,22 @@ bool uploadPhoto() {
     encoded = jpg != nullptr;
     if (encoded) { memcpy(jpg, fb->buf, fb->len); jpgLen = fb->len; }
   } else {
+    int w = fb->width, h = fb->height;
+#if ROTATE_PORTRAIT
+    if (rotate90((uint16_t*)fb->buf, w, h, ROTATE_CLOCKWISE)) { int tmp = w; w = h; h = tmp; }
+    else Serial.println("Rotate failed (out of memory), keeping landscape");
+#endif
     struct tm t;
     if (getLocalTime(&t, 0)) {
       char ts[24];
       strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
-      drawStamp((uint16_t*)fb->buf, fb->width, fb->height, ts);
+      drawStamp((uint16_t*)fb->buf, w, h, ts);
     }
 #if STAMP_SWAP_BYTES
     uint16_t* px = (uint16_t*)fb->buf;
     for (size_t i = 0; i < fb->len / 2; i++) px[i] = (px[i] >> 8) | (px[i] << 8);
 #endif
-    encoded = fmt2jpg(fb->buf, fb->len, fb->width, fb->height, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
+    encoded = fmt2jpg(fb->buf, fb->len, w, h, fb->format, JPEG_QUALITY, &jpg, &jpgLen);
   }
   esp_camera_fb_return(fb);
   if (!encoded) {
