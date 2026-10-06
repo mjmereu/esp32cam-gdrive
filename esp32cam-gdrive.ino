@@ -16,7 +16,7 @@
 #define UPLOAD_INTERVAL_SEC 300      // time between photos (5 min)
 #define WIFI_TIMEOUT_MS     20000
 #define RESPONSE_TIMEOUT_MS 30000    // wait for Google's reply
-#define FRAME_SIZE          FRAMESIZE_VGA  // UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA...
+#define FRAME_SIZE          FRAMESIZE_UXGA  // 1600x1200: largest that fits as raw RGB565 in 8 MB PSRAM (needed for the stamp)
 #define JPEG_QUALITY        80       // 0-100, higher = better quality/bigger file
 #define STAMP_SWAP_BYTES    1        // fixes garbled colors from RGB565 byte order; set 0 if colors look worse
 #define TIMEZONE            "EST5EDT,M3.2.0,M11.1.0"  // US Eastern; other zones: https://github.com/nayarsystems/posix_tz_db
@@ -225,7 +225,7 @@ static const uint8_t STAMP_FONT[13][5] = {
 
 // Draw white text on a black box, bottom-left of an RGB565 frame (black/white are byte-order safe).
 static void drawStamp(uint16_t* px, int w, int h, const char* text) {
-  const int S = 2;   // pixel scale
+  const int S = max(2, w / 400);   // pixel scale grows with image width
   const int len = strlen(text);
   const int boxW = len * 6 * S + 6, boxH = 7 * S + 6;
   const int x0 = 4, y0 = h - boxH - 4;
